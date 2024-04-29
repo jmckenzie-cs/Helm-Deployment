@@ -1,0 +1,44 @@
+name: Deploy CrowdStrike on EKS
+
+on:
+  push:
+    branches:
+      - main  # Trigger the workflow on push to main branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out Repo
+        uses: actions/checkout@v2
+
+      - name: Download CrowdStrike Script
+        run: |
+          curl -sSL -o falcon-container-sensor-pull.sh https://github.com/CrowdStrike/falcon-scripts/releases/latest/download/falcon-container-sensor-pull.sh
+          chmod +x falcon-container-sensor-pull.sh
+
+      - name: Set API Keys and Download Sensor Info
+        env:
+          FALCON_CLIENT_ID: ${{ secrets.FALCON_CLIENT_ID }}
+          FALCON_CLIENT_SECRET: ${{ secrets.FALCON_CLIENT_SECRET }}
+        run: |
+          export FALCON_CID=$(./falcon-container-sensor-pull.sh -t falcon-sensor --get-cid)
+          export FALCON_IMAGE_FULL_PATH=$(./falcon-container-sensor-pull.sh -t falcon-sensor --get-image-path)
+          export FALCON_IMAGE_REPO=$(echo $FALCON_IMAGE_FULL_PATH | cut -d':' -f 1)
+          export FALCON_IMAGE_TAG=$(echo $FALCON_IMAGE_FULL_PATH | cut -d':' -f 2)
+          export FALCON_IMAGE_PULL_TOKEN=$(./falcon-container-sensor-pull.sh -t falcon-sensor --get-pull-token)
+          echo "CID: $FALCON_CID"
+          echo "Full image path: $FALCON_IMAGE_FULL_PATH"
+          echo "Falcon Image Repo: $FALCON_IMAGE_REPO"
+          echo "Falcon Image Tag: $FALCON_IMAGE_TAG"
+
+      - name: Install CrowdStrike Sensor
+        run: |
+          helm repo add crowdstrike https://crowdstrike.github.io/falcon-helm --force-update
+          helm upgrade --install falcon-sensor crowdstrike/falcon-sensor -n falcon-system --create-namespace \
+            --set falcon.cid="$FALCON_CID" \
+            --set node.backend=bpf \
+            --set falcon.tags="daemonset,cloud-lab" \
+            --set node.image.repository="$FALCON_IMAGE_REPO" \
+            --set node.image.tag="$FALCON_IMAGE_TAG" \
+            --set node.image.registryConfigJSON="$FALCON_IMAGE_PULL_TOKEN"
